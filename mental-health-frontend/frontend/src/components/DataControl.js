@@ -9,7 +9,7 @@ function DataControl({ userId }) {
     return (
         <div>
             <p>Notice: You control your data. You can request deletion at any time.</p>
-            <button onClick={handleDelete}>Delete My Data</button>
+            <button onClick={handleDelete}>🗑️ Delete My Data</button>
         </div>
     );
 }

@@ -19,6 +19,30 @@ c.execute('''
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
 ''')
+
+# ✅ Ensure the feedback table exists
+c.execute('''
+    CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        prompt TEXT,
+        response TEXT,
+        rating INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+''')
+
+# ✅ Create location_data table
+c.execute('''
+    CREATE TABLE IF NOT EXISTS location_data (
+        user_id TEXT,
+        latitude REAL,
+        longitude REAL,
+        stress_level INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+''')
+
 conn.commit()
 
 # 🚀 Function to generate responses via Nebius API
@@ -53,11 +77,9 @@ def generate_response(prompt):
 # ✅ Combined Analysis
 def combined_analysis(user_id, message):
     try:
-        # Fetch user memory
         c.execute("SELECT key, value FROM user_memory WHERE user_id = ?", (user_id,))
         memory = dict(c.fetchall())
 
-        # Prepare the prompt for Nebius API
         prompt = f"""
         User ID: {user_id}
         Previous Context: {memory}
@@ -65,12 +87,17 @@ def combined_analysis(user_id, message):
         Provide an empathetic and helpful response based on the user's history.
         """
 
-        # Generate response
         response = generate_response(prompt)
 
-        # Save the latest message in memory
+        # Save latest message
         c.execute("INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
                   (user_id, "last_message", message))
+        conn.commit()
+
+        # 🚀 NEW: Store sentiment (mock example)
+        sentiment = "stressed" if "stress" in message.lower() else "neutral"
+        c.execute("INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
+                  (user_id, "sentiment", sentiment))
         conn.commit()
 
         return response
@@ -94,3 +121,41 @@ def predict_emotional_trends(user_id):
 
     prompt = f"Based on these sentiments over time: {sentiments}, predict emotional trends."
     return generate_response(prompt)
+
+# ✅ Store User Feedback
+def store_feedback(user_id, prompt, response, rating):
+    try:
+        c.execute('''
+            INSERT INTO feedback (user_id, prompt, response, rating)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, prompt, response, rating))
+        conn.commit()
+        print(f"✅ Feedback stored for user {user_id}")
+    except Exception as e:
+        print(f"⚠️ Failed to store feedback: {e}")
+
+# ✅ Store User Location Data
+def store_location(user_id, latitude, longitude, stress_level):
+    try:
+        c.execute('''
+            INSERT INTO location_data (user_id, latitude, longitude, stress_level)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, latitude, longitude, stress_level))
+        conn.commit()
+        print(f"✅ Location data stored for user {user_id}")
+    except Exception as e:
+        print(f"⚠️ Failed to store location: {e}")
+
+# ✅ Retrieve Heat Map Data
+def get_heatmap_data():
+    try:
+        c.execute('''
+            SELECT latitude, longitude, AVG(stress_level) as avg_stress
+            FROM location_data
+            GROUP BY latitude, longitude
+        ''')
+        data = c.fetchall()
+        return [{"latitude": row[0], "longitude": row[1], "avg_stress": row[2]} for row in data]
+    except Exception as e:
+        print(f"⚠️ Failed to fetch heatmap data: {e}")
+        return []
