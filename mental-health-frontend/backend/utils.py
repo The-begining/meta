@@ -75,6 +75,7 @@ def generate_response(prompt):
         return "Sorry, something went wrong."
 
 # ✅ Combined Analysis
+# ✅ Combined Analysis with Emotion Detection
 def combined_analysis(user_id, message):
     try:
         c.execute("SELECT key, value FROM user_memory WHERE user_id = ?", (user_id,))
@@ -94,10 +95,10 @@ def combined_analysis(user_id, message):
                   (user_id, "last_message", message))
         conn.commit()
 
-        # 🚀 NEW: Store sentiment (mock example)
-        sentiment = "stressed" if "stress" in message.lower() else "neutral"
+        # ✅ Detect Emotion from Message
+        emotion = detect_emotion(message)
         c.execute("INSERT INTO user_memory (user_id, key, value) VALUES (?, ?, ?)",
-                  (user_id, "sentiment", sentiment))
+                  (user_id, "emotion", emotion))
         conn.commit()
 
         return response
@@ -105,6 +106,22 @@ def combined_analysis(user_id, message):
     except Exception as e:
         print(f"Combined Analysis Error: {e}")
         return "Sorry, something went wrong."
+
+    
+# ✅ Emotion Detection Based on Keywords
+def detect_emotion(message):
+    message = message.lower()
+    if any(word in message for word in ["happy", "joy", "excited"]):
+        return "Happy"
+    elif any(word in message for word in ["sad", "down", "depressed"]):
+        return "Sad"
+    elif any(word in message for word in ["angry", "frustrated", "mad"]):
+        return "Angry"
+    elif any(word in message for word in ["anxious", "nervous", "worried"]):
+        return "Anxious"
+    else:
+        return "Neutral"
+
 
 # ✅ Delete User Data
 def delete_user_data(user_id):
@@ -137,14 +154,19 @@ def store_feedback(user_id, prompt, response, rating):
 # ✅ Store User Location Data
 def store_location(user_id, latitude, longitude, stress_level):
     try:
+        print(f"📍 Inserting location data: User: {user_id}, Lat: {latitude}, Lon: {longitude}, Stress: {stress_level}")
+
         c.execute('''
             INSERT INTO location_data (user_id, latitude, longitude, stress_level)
             VALUES (?, ?, ?, ?)
         ''', (user_id, latitude, longitude, stress_level))
         conn.commit()
+
         print(f"✅ Location data stored for user {user_id}")
     except Exception as e:
         print(f"⚠️ Failed to store location: {e}")
+        raise e  # Raise the error to send it back to the frontend
+
 
 # ✅ Retrieve Heat Map Data
 def get_heatmap_data():
@@ -158,4 +180,18 @@ def get_heatmap_data():
         return [{"latitude": row[0], "longitude": row[1], "avg_stress": row[2]} for row in data]
     except Exception as e:
         print(f"⚠️ Failed to fetch heatmap data: {e}")
+        return []
+# ✅ Retrieve Emotion Data for Heatmap
+def get_emotion_map_data():
+    try:
+        c.execute('''
+            SELECT location_data.user_id, latitude, longitude, value AS emotion
+            FROM location_data
+            JOIN user_memory ON location_data.user_id = user_memory.user_id
+            WHERE key = 'emotion'
+        ''')
+        data = c.fetchall()
+        return [{"user_id": row[0], "latitude": row[1], "longitude": row[2], "emotion": row[3]} for row in data]
+    except Exception as e:
+        print(f"⚠️ Failed to fetch emotion map data: {e}")
         return []

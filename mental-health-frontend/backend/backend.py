@@ -1,49 +1,35 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import os
-from openai import OpenAI, OpenAIError
 import sqlite3
-from utils import predict_emotional_trends, store_location, get_heatmap_data
+from utils import store_location, get_heatmap_data, store_feedback, predict_emotional_trends
 
 app = FastAPI()
 
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend origin
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load fine-tuned model
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-
-model_path = "./fine_tuned_llama"
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForCausalLM.from_pretrained(model_path)
-chatbot = pipeline("text-generation", model=model, tokenizer=tokenizer)
-
-def generate_response(prompt):
-    response = chatbot(prompt, max_length=150, do_sample=True, temperature=0.7)
-    return response[0]['generated_text']
-
-# API Key Configuration
-api_key = os.environ.get("NEBIUS_API_KEY")
-if not api_key:
-    raise ValueError("NEBIUS_API_KEY not found! Set it as an environment variable.")
-
-client = OpenAI(
-    base_url="https://api.studio.nebius.ai/v1/",
-    api_key=api_key
-)
-
-# Database Configuration
-conn = sqlite3.connect('feedback.db', check_same_thread=False)
+# Database Connection
+conn = sqlite3.connect('database/user_data.db', check_same_thread=False)
 cursor = conn.cursor()
 
-# Create Feedback Table
+# Create Tables
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS location_data (
+        user_id TEXT,
+        latitude REAL,
+        longitude REAL,
+        stress_level INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+''')
+
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,30 +41,12 @@ cursor.execute('''
     )
 ''')
 
-# ✅ Create Location Data Table
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS location_data (
-        user_id TEXT,
-        latitude REAL,
-        longitude REAL,
-        stress_level INTEGER,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-''')
-
 conn.commit()
 
 # Data Models
 class ChatMessage(BaseModel):
     user_id: str
     message: str
-    consent: bool
-
-class Feedback(BaseModel):
-    user_id: str
-    prompt: str
-    response: str
-    rating: int
 
 class LocationData(BaseModel):
     user_id: str
@@ -86,91 +54,61 @@ class LocationData(BaseModel):
     longitude: float
     stress_level: int
 
-# 🚀 Chat Endpoint
+class Feedback(BaseModel):
+    user_id: str
+    prompt: str
+    response: str
+    rating: int
+
+# Routes
+system_prompt = (
+    "Du er en empatisk, vennlig, og litt morsom psykolog. "
+    "Din oppgave er å vise genuin interesse for brukeren, stille egne åpne spørsmål, og virkelig lytte. "
+    "Før du gir råd, prøv å forstå bakgrunnen til brukerens følelser ved å stille spørsmål som: \"Hva har skjedd i det siste?\", \"Vil du dele mer om hva som gjør deg stresset?\", eller \"Hvordan har du hatt det i det siste?\" "
+    "Svar ultra-kort og presist—maks 10-25 ord, med mindre brukeren ber om mer detaljer. "
+    "Bruk en varm, vennlig og litt morsom tone der det passer, men alltid med respekt og følsomhet. "
+    "Gi råd kun når du har nok informasjon, eller når brukeren eksplisitt ber om det. "
+    "Still oppfølgingsspørsmål som holder samtalen i gang og viser ekte interesse. "
+    "Vær en støttende samtalepartner som får folk til å smile og føle seg forstått."
+)
+
+# Example integration in FastAPI endpoint
 @app.post("/chat")
 async def chat_response(data: ChatMessage):
     try:
-        system_prompt = """
-        You are an empathetic and thoughtful mental health companion. 
-        Your role is to actively listen, understand the user's emotions, and create a safe, supportive environment. 
-
-        Guidelines:
-        1. Respond with compassion, validating the user's feelings without judgment.
-        2. Ask thoughtful, open-ended follow-up questions to encourage deeper reflection.
-        3. Keep responses concise—no more than 2 sentences unless the user requests more detail.
-        4. If the user shares a struggle, acknowledge it and gently guide them with supportive suggestions.
-        5. Use the user's previous messages to personalize your responses.
-
-        Example Responses:
-        - "That sounds overwhelming. How are you coping with it right now?"
-        - "I hear that you're feeling anxious. What do you think is contributing to that?"
-        - "It’s okay to feel this way. Would you like to talk more about what’s been on your mind?"
-        """
-
         response = client.chat.completions.create(
-            model="meta-llama/Meta-Llama-3.1-70B-Instruct-fast",
-            temperature=0.6,
+            model="meta-llama/Meta-Llama-3.3-70B-Instruct",
+            temperature=0.7,
             top_p=0.9,
-            max_tokens=150,
+            max_tokens=80,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": data.message}
             ]
         )
-
         llama_reply = response.choices[0].message.content
 
     except Exception as e:
-        llama_reply = "Sorry, something went wrong."
+        llama_reply = "Beklager, noe gikk galt. Men vet du hva som aldri går galt? En god klem... med ord. 🤗"
 
     return {"response": llama_reply}
 
-# ✅ Feedback Endpoint
-@app.post("/feedback")
-async def feedback(data: Feedback):
-    try:
-        cursor.execute('''
-            INSERT INTO feedback (user_id, prompt, response, rating)
-            VALUES (?, ?, ?, ?)
-        ''', (data.user_id, data.prompt, data.response, data.rating))
-        conn.commit()
-        print(f"✅ Feedback received from {data.user_id}")
-        return {"message": "Feedback recorded successfully!"}
-    except Exception as e:
-        print("⚠️ Feedback Error:", e)
-        return {"error": "Failed to record feedback."}
-
-# ✅ Emotional Trends Endpoint
-@app.get("/emotional-trends/{user_id}")
-async def emotional_trends(user_id: str):
-    try:
-        trend = predict_emotional_trends(user_id)
-        return {"trend": trend}
-    except Exception as e:
-        print(f"Trend Error: {e}")
-        return {"trend": "Unable to fetch emotional trends at the moment."}
-
-# ✅ Location Tracking Endpoint
 @app.post("/location")
 async def save_location(data: LocationData):
-    try:
-        store_location(data.user_id, data.latitude, data.longitude, data.stress_level)
-        return {"status": "Location data saved!"}
-    except Exception as e:
-        print("⚠️ Location Save Error:", e)
-        return {"error": "Failed to save location data."}
+    store_location(data.user_id, data.latitude, data.longitude, data.stress_level)
+    return {"status": "Location saved!"}
 
-# ✅ Heat Map Data Endpoint
 @app.get("/heatmap")
 async def heatmap_data():
-    try:
-        heatmap = get_heatmap_data()
-        return {"heatmap": heatmap}
-    except Exception as e:
-        print(f"Heatmap Error: {e}")
-        return {"error": "Failed to fetch heatmap data."}
+    data = get_heatmap_data()
+    return {"heatmap": data}
 
-# Root Endpoint
-@app.get("/")
-async def root():
-    return {"message": "Mental Health Chatbot with LLaMA is running!"}
+@app.post("/feedback")
+async def feedback(data: Feedback):
+    store_feedback(data.user_id, data.prompt, data.response, data.rating)
+    return {"message": "Feedback saved!"}
+
+@app.get("/emotional-trends/{user_id}")
+async def emotional_trends(user_id: str):
+    trend = predict_emotional_trends(user_id)
+    return {"trend": trend}

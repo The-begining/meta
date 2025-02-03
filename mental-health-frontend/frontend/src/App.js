@@ -1,11 +1,30 @@
 import React, { useState } from "react";
+import HeatMap from './HeatMap';
 import "./App.css";
+
 
 function App() {
   const [message, setMessage] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [consent, setConsent] = useState(false);
+  const [showHeatMap, setShowHeatMap] = useState(false); // ✅ Toggle for Heat Map
   const userId = "user123"; // Mock User ID
+  const [emotionMap, setEmotionMap] = useState([]);
+
+  const fetchEmotionMap = async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:8000/emotion-map');
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      const data = await response.json();
+      console.log("Fetched Emotion Map:", data);  // ✅ Debugging line
+      setEmotionMap(data.map_data);
+    } catch (error) {
+      console.error("Error fetching emotion map:", error);
+    }
+  };
+
 
   // ✅ Send Message to Chatbot
   const sendMessage = async () => {
@@ -71,8 +90,6 @@ function App() {
         const { latitude, longitude } = position.coords;
 
         try {
-          const stressLevel = Math.floor(Math.random() * 10) + 1; // Mock stress level (1-10)
-
           const response = await fetch("http://127.0.0.1:8000/location", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -80,24 +97,30 @@ function App() {
               user_id: userId,
               latitude,
               longitude,
-              stress_level: stressLevel,
+              stress_level: Math.floor(Math.random() * 10) + 1,
             }),
           });
 
           if (response.ok) {
             alert("✅ Location shared successfully!");
           } else {
-            throw new Error("Failed to share location.");
+            const errorData = await response.json();
+            console.error("❌ Error from server:", errorData);
+            alert(`❌ Server Error: ${errorData.error}`);
           }
         } catch (error) {
-          console.error("Location Error:", error);
-          alert("Failed to share location.");
+          console.error("❌ Network Error:", error);
+          alert("❌ Failed to share location due to network error.");
         }
+      }, (error) => {
+        console.error("❌ Geolocation Error:", error);
+        alert(`❌ Geolocation Error: ${error.message}`);
       });
     } else {
-      alert("Geolocation is not supported by your browser.");
+      alert("❌ Geolocation is not supported by your browser.");
     }
   };
+
 
   return (
     <div className="App">
@@ -134,7 +157,17 @@ function App() {
             <button onClick={fetchEmotionalTrends}>📊 View Emotional Trends</button>
             <button onClick={deleteData} style={{ color: "red" }}>🗑️ Delete My Data</button>
             <button onClick={trackLocation}>📍 Share My Location</button>
+            <button onClick={() => {
+              setShowHeatMap(!showHeatMap);
+              if (!showHeatMap) fetchEmotionMap();  // Fetch data when showing the map
+            }}>
+              {showHeatMap ? "❌ Hide Heat Map" : "🌍 View Emotion Map"}
+            </button>
           </div>
+
+
+          {showHeatMap && <HeatMap emotionMap={emotionMap} />}
+           {/* ✅ Toggle Heat Map */}
         </div>
       )}
     </div>
