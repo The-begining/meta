@@ -60,36 +60,52 @@ class Feedback(BaseModel):
     response: str
     rating: int
 
-# Routes
-system_prompt = (
-    "Du er en empatisk, vennlig, og litt morsom psykolog. "
-    "Din oppgave er å vise genuin interesse for brukeren, stille egne åpne spørsmål, og virkelig lytte. "
-    "Før du gir råd, prøv å forstå bakgrunnen til brukerens følelser ved å stille spørsmål som: \"Hva har skjedd i det siste?\", \"Vil du dele mer om hva som gjør deg stresset?\", eller \"Hvordan har du hatt det i det siste?\" "
-    "Svar ultra-kort og presist—maks 10-25 ord, med mindre brukeren ber om mer detaljer. "
-    "Bruk en varm, vennlig og litt morsom tone der det passer, men alltid med respekt og følsomhet. "
-    "Gi råd kun når du har nok informasjon, eller når brukeren eksplisitt ber om det. "
-    "Still oppfølgingsspørsmål som holder samtalen i gang og viser ekte interesse. "
-    "Vær en støttende samtalepartner som får folk til å smile og føle seg forstått."
-)
+from utils import fetch_user_context  # ✅ Import function to retrieve user history
 
-# Example integration in FastAPI endpoint
+# Dynamic System Prompt Function
+def create_dynamic_prompt(user_id, user_message):
+    user_context = fetch_user_context(user_id)
+
+    prompt = {
+        "type": "text",
+        "prompt": "Hei der, venn! Jeg er her for å lytte og hjelpe med alt som har vært på ditt sinne. Du kan dele så mye eller så lite du vil, og jeg vil gjøre mitt beste for å forstå og støtte deg. Hva har vært på gang som du vil snakke om?",
+        "response_type": "text",
+        "response_format": {
+            "acknowledgment": "Jeg er så glad du delte det med meg. Det tar mye mot å snakke om {}.",
+            "reflection": "Bare for å sikre at jeg forstår, du føler {} fordi {}.",
+            "open_question": "Kan du fortelle meg mer om {}?",
+            "empathy": "Jeg kan forestille meg hvordan {} det må være for deg. Det høres veldig tøft ut.",
+            "summary": "Bare for å gjøre en oppsummering, du har følt {} fordi {}, og du sliter med {}."
+        },
+        "follow_up_questions": [
+            {"question": "Hva har vært det hardeste med {} for deg?", "response_type": "text"},
+            {"question": "Hvordan følte du når {} skjedde?", "response_type": "text"},
+            {"question": "Hva tror du kan hjelpe deg å føle deg bedre om {}?", "response_type": "text"}
+        ]
+    }
+
+    return prompt
+
+# FastAPI Endpoint with Dynamic Prompt
 @app.post("/chat")
 async def chat_response(data: ChatMessage):
     try:
+        dynamic_prompt = create_dynamic_prompt(data.user_id, data.message)
+
         response = client.chat.completions.create(
             model="meta-llama/Meta-Llama-3.3-70B-Instruct",
             temperature=0.7,
             top_p=0.9,
             max_tokens=80,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": dynamic_prompt["prompt"]},
                 {"role": "user", "content": data.message}
             ]
         )
         llama_reply = response.choices[0].message.content
 
     except Exception as e:
-        llama_reply = "Beklager, noe gikk galt. Men vet du hva som aldri går galt? En god klem... med ord. 🤗"
+        llama_reply = "Oops, something went wrong. But hey, at least it's not a spilled coffee situation, right? ☕"
 
     return {"response": llama_reply}
 
